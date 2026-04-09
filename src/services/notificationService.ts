@@ -27,11 +27,12 @@ export class NotificationService {
    * Invia notifica a un utente specifico
    */
   async sendNotification(payload: NotificationPayload): Promise<any> {
-    let token = payload.token;
+    let token: string | undefined = payload.token || undefined;
 
     // Se non c'è il token, ottienilo dal database
     if (!token && payload.userId) {
-      token = await this.getUserToken(payload.userId);
+      const dbToken = await this.getUserToken(payload.userId);
+      token = dbToken || undefined;
     }
 
     if (!token) {
