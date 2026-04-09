@@ -6,16 +6,15 @@ import { getFirestore } from '../config/firebase';
 import admin from 'firebase-admin';
 
 export class TokenService {
-  private db = getFirestore();
-
   /**
    * Salva o aggiorna token FCM di un utente
    */
   async saveToken(userId: string, token: string, platform: string): Promise<void> {
+    const db = getFirestore();
     const now = admin.firestore.FieldValue.serverTimestamp();
 
     // Cerca token esistente
-    const existingToken = await this.db
+    const existingToken = await db
       .collection('fcm_tokens')
       .where('userId', '==', userId)
       .where('token', '==', token)
@@ -25,13 +24,13 @@ export class TokenService {
     if (!existingToken.empty) {
       // Aggiorna timestamp
       const docId = existingToken.docs[0].id;
-      await this.db.collection('fcm_tokens').doc(docId).update({
+      await db.collection('fcm_tokens').doc(docId).update({
         updatedAt: now,
       });
       console.log(`✅ Token aggiornato per utente ${userId}`);
     } else {
       // Crea nuovo documento
-      await this.db.collection('fcm_tokens').add({
+      await db.collection('fcm_tokens').add({
         userId,
         token,
         platform,
@@ -46,7 +45,8 @@ export class TokenService {
    * Rimuove token FCM di un utente
    */
   async removeToken(userId: string, token?: string): Promise<void> {
-    let query = this.db
+    const db = getFirestore();
+    let query = db
       .collection('fcm_tokens')
       .where('userId', '==', userId);
 
@@ -62,7 +62,7 @@ export class TokenService {
     }
 
     // Elimina tutti i token trovati
-    const batch = this.db.batch();
+    const batch = db.batch();
     snapshot.docs.forEach((doc) => {
       batch.delete(doc.ref);
     });
@@ -75,7 +75,8 @@ export class TokenService {
    * Ottieni tutti i token FCM di un utente
    */
   async getUserTokens(userId: string): Promise<Array<{ id: string; token: string; platform: string }>> {
-    const snapshot = await this.db
+    const db = getFirestore();
+    const snapshot = await db
       .collection('fcm_tokens')
       .where('userId', '==', userId)
       .get();
@@ -90,7 +91,8 @@ export class TokenService {
    * Ottieni un singolo token per notifica
    */
   async getLatestToken(userId: string): Promise<string | null> {
-    const snapshot = await this.db
+    const db = getFirestore();
+    const snapshot = await db
       .collection('fcm_tokens')
       .where('userId', '==', userId)
       .orderBy('updatedAt', 'desc')
@@ -108,7 +110,8 @@ export class TokenService {
    * Ottieni tutti i token per broadcast
    */
   async getAllTokens(): Promise<string[]> {
-    const snapshot = await this.db
+    const db = getFirestore();
+    const snapshot = await db
       .collection('fcm_tokens')
       .get();
 
