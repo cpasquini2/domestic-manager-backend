@@ -11,10 +11,10 @@ export function startCronJobs(): void {
   const expirationScheduler = new ExpirationScheduler();
 
   // ============================================================================
-  // CRON 1: Controllo promemoria ogni giorno alle 8:00
+  // CRON 1: Controllo promemoria OGNI ORA (per rispettare l'ora configurata)
   // ============================================================================
-  cron.schedule('0 8 * * *', async () => {
-    console.log('⏰ [CRON] Inizio controllo promemoria giornaliero...');
+  cron.schedule('0 * * * *', async () => {
+    console.log('⏰ [CRON] Controllo promemoria orario...');
     try {
       await reminderScheduler.checkAndSendReminders();
       console.log('✅ [CRON] Controllo promemoria completato');
@@ -56,7 +56,7 @@ export function startCronJobs(): void {
   });
 
   console.log('✅ Cron job programmati:');
-  console.log('   ⏰ Promemoria: ogni giorno alle 8:00');
+  console.log('   ⏰ Promemoria: ogni ora (minuto 0) - rispetta ora configurata');
   console.log('   📅 Scadenze: ogni giorno alle 9:00');
   console.log('   🧹 Pulizia token: ogni Domenica alle 3:00');
 }

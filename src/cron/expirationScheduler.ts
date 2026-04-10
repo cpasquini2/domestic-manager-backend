@@ -44,7 +44,7 @@ async function getProdotto(db: admin.firestore.Firestore, prodottoId: string, us
   try {
     const snapshot = await db
       .collectionGroup('prodotti')
-      .where('__name__', '==', prodottoId)
+      .where(admin.firestore.FieldPath.documentId(), '==', prodottoId)
       .limit(1)
       .get();
 
