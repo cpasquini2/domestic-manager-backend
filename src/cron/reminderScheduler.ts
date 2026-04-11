@@ -15,6 +15,7 @@ interface PromemoriaDoc {
   frequenzaGiorni: number;
   attivo: boolean;
   ultimaNotifica?: admin.firestore.Timestamp;
+  timezone?: string; // ✅ Timezone IANA (es: 'Europe/Rome'). Default: 'Europe/Rome'
 }
 
 // ============================================================================
@@ -61,62 +62,52 @@ function getCurrentRomeTime(): { hour: number; minute: number } {
 }
 
 /**
- * ✅ FIX: Ottieni l'ora corrente nel timezone Europe/Rome
+ * ✅ FIX: Ottieni l'ora corrente in un timezone specifico
  * I server Railway girano su UTC, quindi new Date() restituisce UTC.
  * Dobbiamo convertire all'ora locale dell'utente.
+ * 
+ * @param timezone - Timezone IANA (es: 'Europe/Rome', 'America/New_York')
+ * @default 'Europe/Rome' - Se non specificato, usa Roma
  */
-function getCurrentRomeTime(): { hour: number; minute: number } {
+function getTimeInTimezone(timezone: string = 'Europe/Rome'): { hour: number; minute: number; date: Date } {
   const now = new Date();
+  
   const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Europe/Rome',
+    timeZone: timezone,
     hour: 'numeric',
     minute: 'numeric',
     hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
   });
+  
   const parts = formatter.formatToParts(now);
   const hour = parseInt(parts.find(p => p.type === 'hour')?.value || '0', 10);
   const minute = parseInt(parts.find(p => p.type === 'minute')?.value || '0', 10);
-  return { hour, minute };
+  const month = parseInt(parts.find(p => p.type === 'month')?.value || '1', 10);
+  const day = parseInt(parts.find(p => p.type === 'day')?.value || '1', 10);
+  const year = parseInt(parts.find(p => p.type === 'year')?.value || '2026', 10);
+  
+  return { hour, minute, date: new Date(year, month - 1, day) };
 }
 
 /**
  * ✅ FIX BUG #2: Controlla SIA la frequenza GIORNI SIA l'ORA configurata
- *
- * Un promemoria va inviato se:
- * 1. Sono passati >= frequenzaGiorni dall'ultima notifica
- * 2. L'ora attuale è entro una finestra di ±30 min dall'ora configurata
- * 3. NON è già stato inviato oggi (controlla ultimaNotifica)
+ * Supporta timezone dinamico per utenti internazionali
  */
 function shouldSendReminder(
   promemoria: PromemoriaDoc, 
   nowHour: number, 
-  nowMinute: number
+  nowMinute: number,
+  nowDate: Date
 ): boolean {
   // ✅ Controllo 1: Frequenza giorni
   if (promemoria.ultimaNotifica) {
     const ultimaNotifica = promemoria.ultimaNotifica.toDate();
     
-    // Convertiamo ultimaNotifica a ora Roma per il confronto giorni
-    const romeFormatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: 'Europe/Rome',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    });
-    const [month, day, year] = romeFormatter.format(ultimaNotifica).split('/');
-    const romeDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-    
-    const todayRome = new Date();
-    const oggiFormatted = new Intl.DateTimeFormat('en-US', {
-      timeZone: 'Europe/Rome',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(todayRome);
-    const [m, d, y] = oggiFormatted.split('/');
-    const today = new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
-
-    const diffTime = today.getTime() - romeDate.getTime();
+    // Calcola giorni trascorsi usando la data nel timezone corretto
+    const diffTime = nowDate.getTime() - ultimaNotifica.getTime();
     const giorniTrascorsi = Math.floor(diffTime / (1000 * 60 * 60 * 24));
 
     if (giorniTrascorsi < promemoria.frequenzaGiorni) {
@@ -200,20 +191,33 @@ export class ReminderScheduler {
    */
   async checkAndSendReminders(): Promise<void> {
     const db = getFirestore();
-    const romeTime = getCurrentRomeTime();
-    console.log(`🔍 Controllo promemoria attivi (ora Roma: ${romeTime.hour}:${String(romeTime.minute).padStart(2, '0')})...`);
 
     const promemoriaList = await getAllActiveReminders(db);
-
     console.log(`📋 Trovati ${promemoriaList.length} promemoria attivi`);
+
+    // Raggruppa promemoria per timezone per efficienza
+    const promemoriaByTimezone: Record<string, typeof promemoriaList> = {};
+    
+    for (const promemoria of promemoriaList) {
+      const tz = promemoria.timezone || 'Europe/Rome'; // Default a Roma se manca
+      if (!promemoriaByTimezone[tz]) {
+        promemoriaByTimezone[tz] = [];
+      }
+      promemoriaByTimezone[tz].push(promemoria);
+    }
 
     let sentCount = 0;
     let skippedCount = 0;
 
-    for (const promemoria of promemoriaList) {
-      try {
-        if (shouldSendReminder(promemoria, romeTime.hour, romeTime.minute)) {
-          console.log(`✅ Promemoria "${promemoria.nome}" pronto per essere inviato (ora configurata: ${promemoria.ora?.hour}:${String(promemoria.ora?.minute || 0).padStart(2, '0')})`);
+    // Processa ogni timezone
+    for (const [timezone, items] of Object.entries(promemoriaByTimezone)) {
+      const timeInfo = getTimeInTimezone(timezone);
+      console.log(`🔍 Controllo promemoria per timezone ${timezone} (ora locale: ${timeInfo.hour}:${String(timeInfo.minute).padStart(2, '0')})...`);
+
+      for (const promemoria of items) {
+        try {
+          if (shouldSendReminder(promemoria, timeInfo.hour, timeInfo.minute, timeInfo.date)) {
+            console.log(`✅ Promemoria "${promemoria.nome}" pronto per essere inviato (ora configurata: ${promemoria.ora?.hour}:${String(promemoria.ora?.minute || 0).padStart(2, '0')})`);
 
           const token = await getUserFCMToken(db, promemoria.userId);
 
