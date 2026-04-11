@@ -1,6 +1,6 @@
 /**
  * Cron job per notifiche promemoria
- * ✅ FIX: Rispetta l'ora configurata dall'utente per ogni promemoria
+ * ✅ ARCHITETTURA SEMPLIFICATA: Collection piatta /promemoria/{reminderId}
  */
 
 import { getFirestore } from '../config/firebase';
@@ -21,9 +21,13 @@ interface PromemoriaDoc {
 // FUNZIONI HELPER
 // ============================================================================
 
+/**
+ * ✅ FIX: Query su collection piatta /promemoria/{reminderId}
+ * Non serve più collectionGroup, query diretta
+ */
 async function getAllActiveReminders(db: admin.firestore.Firestore): Promise<PromemoriaDoc[]> {
   try {
-    const snapshot = await db.collectionGroup('promemoria')
+    const snapshot = await db.collection('promemoria')
       .where('attivo', '==', true)
       .get();
 
@@ -117,17 +121,19 @@ async function getUserFCMToken(db: admin.firestore.Firestore, userId: string): P
   }
 }
 
+/**
+ * ✅ FIX: Aggiorna ultimaNotifica su collection piatta
+ */
 async function updateLastNotification(db: admin.firestore.Firestore, promemoriaId: string): Promise<void> {
   try {
-    const snapshot = await db.collectionGroup('promemoria')
-      .where(admin.firestore.FieldPath.documentId(), '==', promemoriaId)
-      .limit(1)
-      .get();
+    const promemoriaRef = db.collection('promemoria').doc(promemoriaId);
+    const doc = await promemoriaRef.get();
 
-    if (!snapshot.empty) {
-      await snapshot.docs[0].ref.update({
-        ultimaNotifica: new Date(),
+    if (doc.exists) {
+      await promemoriaRef.update({
+        ultimaNotifica: admin.firestore.FieldValue.serverTimestamp(),
       });
+      console.log(`✅ ultimaNotifica aggiornato per promemoria ${promemoriaId}`);
     }
   } catch (error) {
     console.error(`Errore aggiornamento promemoria ${promemoriaId}:`, error);
