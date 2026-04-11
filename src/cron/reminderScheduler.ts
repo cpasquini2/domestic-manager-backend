@@ -42,62 +42,108 @@ async function getAllActiveReminders(db: admin.firestore.Firestore): Promise<Pro
 }
 
 /**
+ * ✅ FIX: Ottieni l'ora corrente nel timezone Europe/Rome
+ * I server Railway girano su UTC, quindi new Date() restituisce UTC.
+ * Dobbiamo convertire all'ora locale dell'utente.
+ */
+function getCurrentRomeTime(): { hour: number; minute: number } {
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/Rome',
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(now);
+  const hour = parseInt(parts.find(p => p.type === 'hour')?.value || '0', 10);
+  const minute = parseInt(parts.find(p => p.type === 'minute')?.value || '0', 10);
+  return { hour, minute };
+}
+
+/**
+ * ✅ FIX: Ottieni l'ora corrente nel timezone Europe/Rome
+ * I server Railway girano su UTC, quindi new Date() restituisce UTC.
+ * Dobbiamo convertire all'ora locale dell'utente.
+ */
+function getCurrentRomeTime(): { hour: number; minute: number } {
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/Rome',
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(now);
+  const hour = parseInt(parts.find(p => p.type === 'hour')?.value || '0', 10);
+  const minute = parseInt(parts.find(p => p.type === 'minute')?.value || '0', 10);
+  return { hour, minute };
+}
+
+/**
  * ✅ FIX BUG #2: Controlla SIA la frequenza GIORNI SIA l'ORA configurata
- * 
+ *
  * Un promemoria va inviato se:
  * 1. Sono passati >= frequenzaGiorni dall'ultima notifica
  * 2. L'ora attuale è entro una finestra di ±30 min dall'ora configurata
  * 3. NON è già stato inviato oggi (controlla ultimaNotifica)
  */
-function shouldSendReminder(promemoria: PromemoriaDoc, now: Date): boolean {
+function shouldSendReminder(
+  promemoria: PromemoriaDoc, 
+  nowHour: number, 
+  nowMinute: number
+): boolean {
   // ✅ Controllo 1: Frequenza giorni
   if (promemoria.ultimaNotifica) {
     const ultimaNotifica = promemoria.ultimaNotifica.toDate();
-    const giorniTrascorsi = (now.getTime() - ultimaNotifica.getTime()) / (1000 * 60 * 60 * 24);
+    
+    // Convertiamo ultimaNotifica a ora Roma per il confronto giorni
+    const romeFormatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Europe/Rome',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    const [month, day, year] = romeFormatter.format(ultimaNotifica).split('/');
+    const romeDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+    
+    const todayRome = new Date();
+    const oggiFormatted = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Europe/Rome',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(todayRome);
+    const [m, d, y] = oggiFormatted.split('/');
+    const today = new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
+
+    const diffTime = today.getTime() - romeDate.getTime();
+    const giorniTrascorsi = Math.floor(diffTime / (1000 * 60 * 60 * 24));
 
     if (giorniTrascorsi < promemoria.frequenzaGiorni) {
-      // Troppo presto, non sono ancora passati abbastanza giorni
       return false;
     }
 
-    // Se è lo stesso giorno dell'ultima notifica, non inviare di nuovo
-    const lastNotificaDay = new Date(ultimaNotifica);
-    const today = new Date(now);
-    if (
-      lastNotificaDay.getFullYear() === today.getFullYear() &&
-      lastNotificaDay.getMonth() === today.getMonth() &&
-      lastNotificaDay.getDate() === today.getDate()
-    ) {
-      // Già inviato oggi
+    // Se è lo stesso giorno, non inviare di nuovo
+    if (giorniTrascorsi === 0) {
       return false;
     }
   }
 
   // ✅ Controllo 2: Ora configurata (finestra ±30 minuti)
-  const reminderHour = promemoria.ora?.hour ?? 8; // Default 8:00 se mancante
+  const reminderHour = promemoria.ora?.hour ?? 8;
   const reminderMinute = promemoria.ora?.minute ?? 0;
 
-  const nowHour = now.getHours();
-  const nowMinute = now.getMinutes();
-
-  // Converti tutto in minuti per confronto semplice
   const reminderTotalMinutes = reminderHour * 60 + reminderMinute;
   const nowTotalMinutes = nowHour * 60 + nowMinute;
 
-  // Finestra di tolleranza: 30 minuti prima o dopo
   const toleranceMinutes = 30;
   const diffMinutes = Math.abs(nowTotalMinutes - reminderTotalMinutes);
-
-  // Gestisce il caso mezzanotte (es: reminder alle 00:10, ora attuale 23:50)
-  const isWithinWindow = diffMinutes <= toleranceMinutes ||
-    (1440 - diffMinutes) <= toleranceMinutes; // 1440 = minuti in un giorno
+  const isWithinWindow = diffMinutes <= toleranceMinutes || (1440 - diffMinutes) <= toleranceMinutes;
 
   if (!isWithinWindow) {
-    // Non è ancora l'ora giusta
     return false;
   }
 
-  // ✅ Entrambi i criteri soddisfatti
   return true;
 }
 
@@ -154,8 +200,8 @@ export class ReminderScheduler {
    */
   async checkAndSendReminders(): Promise<void> {
     const db = getFirestore();
-    const now = new Date();
-    console.log(`🔍 Controllo promemoria attivi (ora: ${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')})...`);
+    const romeTime = getCurrentRomeTime();
+    console.log(`🔍 Controllo promemoria attivi (ora Roma: ${romeTime.hour}:${String(romeTime.minute).padStart(2, '0')})...`);
 
     const promemoriaList = await getAllActiveReminders(db);
 
@@ -166,7 +212,7 @@ export class ReminderScheduler {
 
     for (const promemoria of promemoriaList) {
       try {
-        if (shouldSendReminder(promemoria, now)) {
+        if (shouldSendReminder(promemoria, romeTime.hour, romeTime.minute)) {
           console.log(`✅ Promemoria "${promemoria.nome}" pronto per essere inviato (ora configurata: ${promemoria.ora?.hour}:${String(promemoria.ora?.minute || 0).padStart(2, '0')})`);
 
           const token = await getUserFCMToken(db, promemoria.userId);
