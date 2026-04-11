@@ -251,6 +251,7 @@ export class ReminderScheduler {
         console.error(`❌ Errore elaborazione promemoria ${promemoria.id}:`, error);
       }
     }
+    } // Chiusura ciclo for timezone
 
     console.log(`📊 Risultati controllo: ${sentCount} inviati, ${skippedCount} saltati`);
   }
